@@ -6,7 +6,7 @@
 #include <vector>
 #include <algorithm>
 
-#define STACK_START 0x00007F0000000000
+#define STACK_START 0x00007FF000000000
 
 void GetAddressOfData(DWORD pid, const char *data, size_t len,std::vector<char*>& adresses)
 {
@@ -25,7 +25,7 @@ void GetAddressOfData(DWORD pid, const char *data, size_t len,std::vector<char*>
 
         MEMORY_BASIC_INFORMATION info;
         std::vector<char> chunk;
-        char* p = (char*)si.lpMinimumApplicationAddress;
+        char* p = (char*)STACK_START;
         
         while(p < si.lpMaximumApplicationAddress)
         {
@@ -60,11 +60,11 @@ void GetAddressOfData(DWORD pid, const char *data, size_t len,std::vector<char*>
                 if(memcmp(data,  &chunk[i], len) == 0)
                 {    
                     char* adr = (char*)p + i;
-                    if(first == true)
+                    if(first == true && adresses.size() < adresses.max_size())
                     {
                         adresses.push_back(adr);
                     }
-                    else
+                    else if(temp.size() < temp.max_size())
                     {
                         temp.push_back(adr);
                     }
@@ -77,7 +77,7 @@ void GetAddressOfData(DWORD pid, const char *data, size_t len,std::vector<char*>
         printf("Intersecting adresses...\n");
 
         std::vector<char*> intersection;
-        intersection.reserve(min( adresses.size(),temp.size() ));
+        intersection.resize(min( adresses.size(),temp.size() ));
 
         std::set_intersection(adresses.begin(),adresses.end(),
                             temp.begin(),temp.end(),
@@ -90,6 +90,69 @@ void GetAddressOfData(DWORD pid, const char *data, size_t len,std::vector<char*>
     
     if(first == true) 
         first = false;
+    CloseHandle(process);
+}
+
+void CheckAddressesOfData(DWORD pid, const char *data, size_t len,std::vector<char*>& adresses)
+{
+    std::vector<char*> temp;
+    temp.reserve(adresses.size());
+
+    HANDLE process = OpenProcess(PROCESS_VM_READ | PROCESS_QUERY_INFORMATION , FALSE, pid);
+    if(process)
+    {
+        printf("Entered process\n");
+        SYSTEM_INFO si;
+        GetSystemInfo(&si);
+
+        MEMORY_BASIC_INFORMATION info;
+        std::vector<char> chunk;
+        char* p = (char*)STACK_START;
+        
+        size_t k = 0;
+
+        while(p < si.lpMaximumApplicationAddress)
+        {
+            if(!VirtualQueryEx(process, p, &info, sizeof(info)))
+            {
+                printf("Virtual query fail\n");
+                p += info.RegionSize;
+                continue;
+            }
+
+            if(info.State != MEM_COMMIT)
+            {
+                printf("Skipped page(invalid acces)\n");
+                p += info.RegionSize;
+                continue;
+            }
+
+            p = (char*)info.BaseAddress;
+            chunk.resize(info.RegionSize);
+
+            SIZE_T bytesRead;
+            if(!ReadProcessMemory(process, p, &chunk[0], chunk.size(), &bytesRead))
+            {
+                printf("Read fail\n");
+                p += info.RegionSize;
+                continue;
+            }
+
+            //Checking previous finds
+            while(p <= adresses[k] && adresses[k] < p + info.RegionSize - len){
+                if(memcmp(data, &chunk[adresses[k] - p], len) == 0){
+                    temp.push_back(adresses[k]);
+                }
+                k++;
+            }
+            p += info.RegionSize;
+        }
+    }
+
+    printf("Checking adresses...\n");
+
+    adresses = std::move(temp);
+    
     CloseHandle(process);
 }
 
@@ -118,7 +181,7 @@ int main(){
     ///////////////
     // DATA SPOT //
     //////////////
-    int data = 99;
+    int data = 1;
     int dataNew = 99;
     char processName[30] = "DarkSoulsIII";//"DarkSoulsIII";
 
@@ -126,7 +189,7 @@ int main(){
     //scanf("%s",&processName);
     
     printf("Write numerical data target:\n");
-    //std::cin >> data;
+    std::cin >> data;
     
     printf("Enter new data:\n");
     //std::cin >> dataNew;
@@ -152,12 +215,21 @@ int main(){
                     std::cin.get();
                 }
                 std::vector<char*> adresses;
-                GetAddressOfData(process,(char*)&data,sizeof(data),adresses);
-                //adresses.push_back(reinterpret_cast<char*>(0x00007FF45C0F24A8));
+
+                /////////////////
+                //Custom adress//
+                /////////////////
+               GetAddressOfData(process,(char*)&data,sizeof(data),adresses);
+                //adresses.push_back(reinterpret_cast<char*>(0x00007FF3C46930A8));
+                /*
+                00007FF3B8154428
+00007FF3C4691B01
+00007FF3C46930A8
+                */
                 if(adresses.size())
                 {
-                    while(adresses.size() > 1){
-                        std::cout << "Found " << adresses.size() << " adresses:\n";
+                    while(adresses.size() > 3){
+                        std::cout << "Found" << adresses.size() << " adresses:\n";
 
                         if(adresses.size() < 10)
                             for(auto& a : adresses){
@@ -167,7 +239,7 @@ int main(){
                         printf("New numerical data:\n");
                         std::cin >> data;
 
-                        GetAddressOfData(process,(char*)&data,sizeof(data),adresses);
+                        CheckAddressesOfData(process,(char*)&data,sizeof(data),adresses);
                     }
                     if(!adresses.size())
                     {
@@ -177,7 +249,9 @@ int main(){
 
                     printf("Found adress: %p\n",adresses[0]);
 
-                    SetAdressData(process,adresses[0],(char*)&dataNew,sizeof(dataNew));
+                    for(auto& a : adresses)
+                        SetAdressData(process,a,(char*)&dataNew,sizeof(dataNew));
+
                     std::cout << "Set " << data << " to new data: " << dataNew << std::endl;
                 }
                 else
