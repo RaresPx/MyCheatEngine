@@ -11,7 +11,6 @@
 void GetAddressOfData(DWORD pid, const char *data, size_t len,std::vector<char*>& adresses)
 {
     static bool first = true;
-    //cacat
     std::vector<char*> temp;
     if(first == false)
         temp.reserve(adresses.size());
